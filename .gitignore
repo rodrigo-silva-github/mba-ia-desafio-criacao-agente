@@ -1,3 +1,19 @@
-.env
-.venv/
+# Python
 __pycache__/
+*.py[cod]
+.venv/
+
+# Dados sensíveis
+.env
+.env.local
+
+# Bancos de dados em runtime (nunca versionar)
+*.db
+*.sqlite
+*.sqlite3
+var/
+
+# Ferramentas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
