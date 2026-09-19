@@ -90,3 +90,15 @@ matching function call" (a resposta duplicada é descartada; execução segue 1x
   tool inexistente repetidamente, o ADK estoura `LlmCallsLimitExceededError`
   (limite padrão 500) — sem erro de servidor no fluxo do avaliador, mas
   convém modelar para o roaming normal do Gemini.
+
+## Achado da Fase 3 (multi-turno depois da retomada)
+
+Com `single_turn`, DEPOIS de resolver uma confirmação, a sessão continua a
+invocação do sub-agente: os próximos textos do morador entram NO MESMO
+especialista (o principal não é re-consultado; o runner cancela o root).
+O spike da Fase 1 não o detectou porque cada cenário usava uma sessão nova e
+UM só mensagem. Implicação prática: cada sessão deve exercitar uma única
+família de tools — o fluxo do avaliador já o garante, porque dentro de cada
+`/chat` todos os pedidos são de reservas (visitante/regulamento vêm de
+sessões distintas). Verificado na suite da Fase 3 (14/14, sessões por
+especialidade).

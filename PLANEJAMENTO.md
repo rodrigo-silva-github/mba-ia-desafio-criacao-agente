@@ -220,7 +220,7 @@ confirmação (recomenda-se: idempotência — segunda recebe 409/leitura do est
 | **D3b** | Tecnologia dos dados de negócio | SQLite (UNIQUE) vs JSON+lock | ✅ **RESOLVIDA: SQLite** — atomicidade nativa na gravação (Garantia 5); JSON rejeitado | Alto (Garantia 5) | Fase 2 |
 | **D4** | Restore apaga sessões? | Apagar junto / só dados | ✅ **RESOLVIDA (Fase 2): apaga também as sessões** (estado 100% inicial, documentado no comando). `uv run python -m aurora.scripts.restore` recarga reservas/visitantes dos seeds e apaga `var/aurora_sessoes.db` | Baixo | Fase 2 |
 | **D5** | Topologia de especialistas | transfer_to_agent vs single_turn | ✅ **RESOLVIDA (spike): especialistas com `mode='single_turn'`** (tool inline do principal) — a retomada de confirmação é determinística (10/10), enquanto transfer_to_agent é flaky (5/8, com no-op silencioso e `cannot transfer to itself`). Nº de especialistas: 3 (reservas, visitantes, regulamento) | Alto (Garantia 1 + 3) | Fase 1/3 |
-| **D6** | Recuperação do regulamento | Mapa capítulo→palavras-chave vs embeddings/RAG | Mapa por seção com busca por termos (sem dependência extra); trocar por embeddings só se a precisão falhar no passo 12 | Médio (Garantia 4) | Fase 3 |
+| **D6** | Recuperação do regulamento | Mapa capítulo→palavras-chave vs embeddings/RAG | ✅ **RESOLVIDA (Fase 3): mapa por capítulos com scoring por tokens** (`agentes/regulamento.py`, sem dependencias; responde os 2 capítulos mais relevantes). Embeddings só se a precisão falhar no passo 12 | Médio (Garantia 4) | Fase 3 |
 | **D7** | Mecanismo de confirmação | `require_confirmation=True` (bool simples) vs `tool_context.request_confirmation` (payload/avançado) | ✅ **RESOLVIDA (spike)**: avançado com payload para manter `detalhes`; booleano como opção. Resposta = FunctionResponse para o FC `adk_request_confirmation` (id do FC long-running, extraído dos eventos; `requested_tool_confirmations` é chaveado pelo id da tool original) enviada como `new_message` no `run_async` — sem `invocation_id` explícito (ignorado quando há FR) | Alto (Garantia 1) | Fase 1 (spike) |
 | **D8** | Serialização do `GET /eventos` | Converter schema ADK p/ JSON cru vs projeção enxuta | Projeção fiel mas completa (o contrato pede "conteúdo completo"); definir campos exatos na Fase 4; conferir vazamentos | Médio — afeta vazamentos e a contagem do passo 13 | Fase 4 |
 | **D9a** | Apartamento inexistente no `POST /sessoes` | 400 / 404 / criar mesmo assim | 404 (ou 400) — comportamento livre, mas resposta explícita facilita depuração | Baixo | Fase 4 |
@@ -234,6 +234,14 @@ leitura; exclusividade via índice UNIQUE PARCIAL `(area, data) WHERE ativo=1`
 no INSERT — nota de design: como os cancelados conservam a fila (códigos não
 reutilizáveis), um UNIQUE global bloquearia re-reservar; o índice parcial
 mantém a exclusividade solo entre ativas (validado 18/18 na Fase 2).
+
+**Achado Fase 3 (ADK 2.9.2, topologia single_turn + confirmação)**: depois
+de RESOLVER uma confirmação, a sessão continua a invocação do sub-agente — os
+próximos textos do morador entram NO MESMO especialista (o root é cancelado).
+Não impede o fluxo do enunciado: cada `/chat/{apartamento}` é uma sessão
+própria e, dentro dela, o avaliador só exercita reservas (os pedidos de
+visitante/regulamento vêm de apartamentos/sessões distintos). Documentado em
+`spikes/001-confirmacao-persistida/README.md`; verificado 14/14.
 
 ## 10. Pendências de pesquisa (links oficiais)
 
