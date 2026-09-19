@@ -22,17 +22,39 @@ confirmado o framework entrega `tool_context.tool_confirmation`.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from google.adk.tools import ToolContext
 
-from ..config import load_areas
+from ..config import load_area_names, load_areas
 from ..storage import reservas_store, visitantes_store
 from . import regulations
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 AREAS = load_areas()  # id -> taxa (0 = sem taxa, não gera cobrança)
+AREA_NAMES = load_area_names()  # id -> nome de exibição
+
+
+def _slug(text: str) -> str:
+    """Normaliza texto para comparação: sem acento, minúsculo, com hífens."""
+    sem_acento = "".join(
+        c for c in unicodedata.normalize("NFKD", text or "") if not unicodedata.combining(c)
+    )
+    return re.sub(r"[^a-z0-9]+", "-", sem_acento.lower()).strip("-")
+
+
+# O morador (e o modelo) escrevem "salão de festas"; o id é `salao-de-festas`.
+# Aceitar as duas formas é regra de código, não de prompt: o modelo pode mandar
+# o nome de exibição e a tool resolve para o id canônico.
+_AREA_ALIASES: dict[str, str] = {_slug(aid): aid for aid in AREAS}
+_AREA_ALIASES.update({_slug(nome): aid for aid, nome in AREA_NAMES.items()})
+
+
+def _canonical_area(area: str) -> str | None:
+    """Id canônico da área a partir do id ou do nome que chegou na tool."""
+    return _AREA_ALIASES.get(_slug(area))
 
 
 def _apartment(tool_context: ToolContext) -> str:
@@ -61,6 +83,7 @@ async def book_area(area: str, data: str, tool_context: ToolContext) -> dict[str
     direto. A gravação usa os valores do payload aprovado.
     """
     apartment = _apartment(tool_context)
+    area = _canonical_area(area) or area  # aceita id ou nome ("Salão de festas")
     tc = tool_context.tool_confirmation
     if tc is None:
         problema = _invalid(area, data)
@@ -76,7 +99,7 @@ async def book_area(area: str, data: str, tool_context: ToolContext) -> dict[str
     if not tc.confirmed:
         return {"status": "refused_by_resident", "message": "Reserva descartada."}
     approved = tc.payload or {}
-    area = approved.get("area") or area
+    area = _canonical_area(approved.get("area") or area) or area
     data = approved.get("data") or data
     apartment = approved.get("apartamento") or apartment
     if _invalid(area, data):
@@ -94,13 +117,34 @@ async def _do_book(apartment: str, area: str, data: str) -> dict[str, Any]:
             "data": r.reservation.data, "apartamento": apartment}
 
 
-async def cancel_reservation(codigo: str, tool_context: ToolContext) -> dict[str, Any]:
+async def cancel_reservation(
+    tool_context: ToolContext,
+    codigo: str = "",
+    area: str = "",
+    data: str = "",
+) -> dict[str, Any]:
     """Cancela uma reserva própria: regra 4, sem confirmação.
 
-    O cancelamento NÃO gera cobrança nem libera acesso -> NÃO pede
+    Aceita o CÓDIGO ou, quando o morador descreve a reserva ("a minha quadra do
+    dia 2030-03-09"), a ÁREA e a DATA — o código é resolvido no banco entre as
+    reservas do próprio apartamento, nunca inventado pelo modelo. O
+    cancelamento NÃO gera cobrança nem libera acesso, então NÃO pede
     confirmação (passo 5 do fluxo).
     """
     apartment = _apartment(tool_context)
+    if not codigo:
+        area_canonica = _canonical_area(area) or area
+        if not (area_canonica and data):
+            return {"status": "invalid_requirements",
+                    "message": "Informe o código da reserva ou a área e a data."}
+        if _invalid(area_canonica, data):
+            return {"status": "invalid_requirements",
+                    "message": "Área ou data inválida (data no formato AAAA-MM-DD)."}
+        encontrado = await reservas_store.find_active(apartment, area_canonica, data)
+        if encontrado is None:
+            return {"status": "not_found",
+                    "message": f"Você não tem reserva ativa da {area_canonica} em {data}."}
+        codigo = encontrado
     ok = await reservas_store.cancel(apartment, codigo)
     if not ok:
         return {"status": "not_found",
@@ -118,6 +162,7 @@ async def list_reservations(tool_context: ToolContext) -> dict[str, Any]:
 async def check_availability(area: str, data: str, tool_context: ToolContext) -> dict[str, Any]:
     """Consulta disponibilidade; retorna SOMENTE livre/ocupada (Garantia 2)."""
     del tool_context
+    area = _canonical_area(area) or area
     available = await reservas_store.is_available(area, data)
     return {"area": area, "data": data, "available": available}
 

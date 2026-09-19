@@ -105,6 +105,25 @@ async def book(apartment: str, area: str, data: str) -> ReservationResult:
         await conn.close()
 
 
+async def find_active(apartment: str, area: str, data: str) -> str | None:
+    """Código da reserva ATIVA do apartamento para área+data (None se não houver).
+
+    Usado pelo cancelamento por descrição ("cancele a minha quadra do dia X"):
+    o código é resolvido no banco, nunca inventado pelo modelo.
+    """
+    conn = await db.connect()
+    try:
+        async with conn.execute(
+            "SELECT codigo FROM reservas "
+            "WHERE apartamento = ? AND area = ? AND data = ? AND ativo = 1",
+            (apartment, area, data),
+        ) as cur:
+            row = await cur.fetchone()
+        return row[0] if row else None
+    finally:
+        await conn.close()
+
+
 async def cancel(apartment: str, codigo: str) -> bool:
     """Cancela UMA reserva (ativa) do próprio apartamento."""
     conn = await db.connect()

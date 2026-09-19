@@ -97,7 +97,7 @@ def _last_text(events) -> str:
     return ""
 
 
-async def _run_turn(session_row: dict, content) -> tuple[list, dict]:
+async def _run_turn(session_row: dict, content, reanchor: bool = False) -> tuple[list, dict]:
     """Roda o turno ADK e sincroniza a tabela de pendências.
 
     Usa um Runner NOVO por turno (decisão D9d): cada rota abre sua própria
@@ -115,20 +115,30 @@ async def _run_turn(session_row: dict, content) -> tuple[list, dict]:
     terminou pedindo confirmação NÃO é re-fixado: o último evento precisa
     continuar sendo o `adk_request_confirmation` do especialista para que a
     retomada chegue a ele (fix da pendência duplicada).
+
+    `reanchor=True` (rota de mensagens): se a sessão tem pendência ativa, a
+    raiz é re-fixada ANTES do turno. Sem isso, uma mensagem de texto enviada
+    enquanto existe confirmação pendente cai no especialista que pediu a
+    confirmação (o último evento é dele) e o pedido não chega ao domínio
+    certo. Nada executa: a pendência segue intacta e só a rota
+    /confirmacoes a resolve.
     """
     runner = new_runner()
     user_id = session_row["user_id"]
+    session_id = session_row["session_id"]
+    if reanchor and await confirmations_store.list_pending(session_id):
+        await anchor_root(runner, user_id, session_id)
     events = []
     async for ev in runner.run_async(
-        user_id=user_id, session_id=session_row["session_id"], new_message=content
+        user_id=user_id, session_id=session_id, new_message=content
     ):
         events.append(ev)
     pending = find_pending(events)
     if pending is not None:
         await confirmations_store.add_or_ignore(
-            session_row["session_id"], pending.id_to_answer, pending.action, pending.details)
+            session_id, pending.id_to_answer, pending.action, pending.details)
         return events, ""
-    await anchor_root(runner, user_id, session_row["session_id"])
+    await anchor_root(runner, user_id, session_id)
     return events, _last_text(events)
 
 
@@ -158,7 +168,7 @@ async def create_session(req: CreateSessionRequest):
 async def send_message(session_id: str, req: MessageRequest):
     """Processa uma mensagem do morador na sessão."""
     row = await _session_row(session_id)
-    events, resposta = await _run_turn(row, text_message(req.texto))
+    events, resposta = await _run_turn(row, text_message(req.texto), reanchor=True)
     return {
         "resposta": resposta,
         "confirmacoes_pendentes": await _pending_list(session_id),

@@ -57,6 +57,19 @@ def load_areas() -> dict[str, float]:
     return {a["id"]: float(a["taxa"]) for a in areas}
 
 
+def load_area_names() -> dict[str, str]:
+    """Nome de exibição de cada área (id -> nome).
+
+    Usado para normalizar o que o morador (e o modelo) escrevem: o morador
+    pede "o salão de festas", o id é `salao-de-festas`.
+    """
+    import json
+
+    with open(AREAS_JSON, encoding="utf-8") as f:
+        areas = json.load(f)
+    return {a["id"]: a["nome"] for a in areas}
+
+
 def load_apartments() -> set[str]:
     """Números de apartamentos conhecidos (para validar entradas)."""
     import json
