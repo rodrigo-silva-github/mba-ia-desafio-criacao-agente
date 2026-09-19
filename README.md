@@ -282,3 +282,63 @@ O README tem três seções. Arquitetura descreve cada agente, sua responsabilid
 A armadilha mais cara deste desafio é silenciosa: a rota de confirmações aceita a resposta, nenhum erro aparece e a ação não executa. A retomada só funciona quando a resposta chega ao agente que pediu a confirmação, e quem escolhe esse agente é o Runner. Nos nossos testes, nas versões 2.2.0 e 2.9.1, essa escolha mudou conforme a topologia dos agentes, os bloqueios de transferência, a configuração de retomada do App e o serviço de sessão, e uma combinação que funcionava em memória falhou com a sessão persistida. A página de confirmação de ações da documentação oficial diz que alguns serviços de sessão não são suportados, mas, nesses mesmos testes, a confirmação funcionou com sessão persistida em SQLite quando a resposta chegou ao agente certo. Por isso, teste a aprovação com a sessão persistida e depois de reiniciar a API, não só no adk web.
 
 Enquanto desenvolve, o adk web continua sendo o melhor lugar para ver transferências, chamadas de tool e pedidos de confirmação acontecendo. E a filosofia do desafio cabe numa frase: o modelo decide o caminho, o código decide o que é permitido.
+
+## Fase 4 — API e verificação (implementação)
+
+Seção operativa da implementação da Fase 4 do `PLANEJAMENTO.md`: a API
+FastAPI com as rotas do contrato acima, as variáveis de ambiente reais do
+projeto e os comandos de restauração, subida e verificação. O enunciado
+(contrato e fluxo do avaliador) permanece intacto nas seções anteriores.
+
+### Variáveis de ambiente
+
+Copie `.env.example` para `.env` e preencha os valores. O `.env` nunca é
+versionado.
+
+| Variável | Propósito | Default |
+|---|---|---|
+| `GEMINI_API_KEY` | Chave do Google AI Studio para os modelos Gemini. Sem chave, o sistema usa um modelo fake determinista (testes offline de ponta a ponta). | — (vazia) |
+| `MAIN_MODEL` | Modelo Gemini do agente principal. | `gemini-2.5-flash` |
+| `RESERVATIONS_MODEL` | Modelo Gemini do especialista de reservas. | `gemini-2.5-flash` |
+| `VISITORS_MODEL` | Modelo Gemini do especialista de visitantes. | `gemini-2.5-flash` |
+| `REGULATIONS_MODEL` | Modelo Gemini do especialista de regulamento. | `gemini-2.5-flash` |
+| `SESSIONS_DB_PATH` | Banco SQLite das sessões ADK (Garantia 3). | `var/aurora_sessoes.db` |
+| `BUSINESS_DB_PATH` | Banco SQLite dos dados de negócio (reservas/visitantes). | `var/aurora_dados.db` |
+
+### Comandos
+
+| Comando | O que faz |
+|---|---|
+| `uv run python -m aurora.scripts.restore` | Restaura os dados iniciais: recarrega reservas e visitantes dos seeds de `dados/` e apaga as sessões e confirmações pendentes (estado inicial completo). |
+| `uv run python run_api.py` | Sobe a API (uvicorn) em `http://localhost:8000`. |
+| `uv run python -m aurora.scripts.verificar_storage` | Verifica o storage: bancos, seed e exclusividade da reserva. |
+| `uv run python -m aurora.scripts.verificar_agentes` | Verifica os agentes: principal + especialistas, tools e vínculo do apartamento. |
+| `uv run python -m aurora.scripts.verificar_api` | Verifica a API de ponta a ponta reproduzindo o fluxo do avaliador (passos 2–14) via transporte ASGI, sem subir servidor. |
+
+### Descrição da implementação
+
+- **Rotas implementadas** (contrato completo acima): `POST /sessoes`,
+  `POST /sessoes/{id}/mensagens`, `POST /sessoes/{id}/confirmacoes`,
+  `GET /sessoes/{id}/eventos`, `GET /apartamentos/{n}/reservas` e
+  `GET /apartamentos/{n}/visitantes`.
+- **Roteamento determinístico ao principal**: os três especialistas são
+  `single_turn` com `disallow_transfer_to_parent=True`
+  (`src/aurora/agents/builder.py`), o que faz o router do ADK ignorar os
+  eventos dos especialistas na varredura de `find_agent_to_run` e voltar
+  sempre ao principal nos turnos de texto — sem isso, a sessão ficava presa
+  no especialista do último domínio de forma intermitente.
+- **Re-anclagem ao agente principal** (`anchor_root` em
+  `src/aurora/agents/builder.py`): ao FIM de cada turno resolvido, a API anexa
+  à sessão um evento sintético do `main_agent` com timestamp estritamente
+  maior que o maior timestamp já gravado (`max(timestamps) + 1e-3`), de modo
+  que o último evento do turno seja do principal. Um turno que terminou
+  pedindo confirmação NÃO é ancorado: o último evento precisa continuar sendo
+  o `adk_request_confirmation` do especialista.
+- **Runner novo por turno**: cada rota de mensagem/confirmação cria um Runner
+  novo sobre o mesmo banco de sessões SQLite. Escrituras concorrentes em
+  sessões diferentes (passo 14 do avaliador) não se pisam, e o restart é fiel
+  à Garantia 3 (tudo é lido do banco de sessões).
+- **Idempotência 409**: a tabela `confirmations` é a fonte de verdade. Duas
+  respostas à mesma confirmação pendente — inclusive simultâneas — executam
+  uma única vez (claim atômico `pending → answered`); a segunda recebe `409` e
+  não executa nada.
