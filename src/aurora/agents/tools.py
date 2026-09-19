@@ -1,6 +1,6 @@
 """Tools de negócio do Residencial Aurora.
 
-Contratos de desenho (ver PLANEJAMENTO.md, seção 4.3):
+Contratos de desenho (ver README.md, seção Garantias):
 - O apartamento NUNCA chega como argumento do modelo: é lido do estado da
   sessão (`tool_context.state['apartamento']`); a API o fixa na criação
   (Garantia 2). Nenhuma tool aceita um apartamento escolhido pelo modelo.
