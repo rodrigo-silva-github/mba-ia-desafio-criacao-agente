@@ -116,17 +116,18 @@ spike da Fase 1.
 
 | Rota | Comportamento | Observações de implementação |
 |---|---|---|
-| `POST /sessoes` | 201 + `session_id` | valida apartamento em `apartamentos.json` **[ABERTO — D9a]**: recomenda-se 400/404 para inexistente (comportamento livre) |
-| `POST /sessoes/{id}/mensagens` | 200 + `resposta` + `confirmacoes_pendentes` | roda o App; varre os eventos do turno e sincroniza a tabela de pendências; `resposta` vazia se parou em confirmação |
-| `POST /sessoes/{id}/confirmacoes` | 200 (mesmo formato) / 409 | valida id pendente da sessão (nunca reaproveitável); injeta FunctionResponse/ToolConfirmation e retoma a execução; id desconhecido ou já respondido → 409 e nada executa |
-| `GET /sessoes/{id}/eventos` | 200 lista completa, em ordem | 404 se sessão não existe; serializar eventos ADK para JSON **[ABERTO — D8]** |
-| `GET /apartamentos/{n}/reservas` | verificação, lê direto do store | sem passar pelo modelo |
-| `GET /apartamentos/{n}/visitantes` | verificação, lê direto do store | sem passar pelo modelo |
+| `POST /sessoes` | 201 + `session_id` | valida apartamento em `apartamentos.json` **[RESOLVIDA — D9a, ver seção 9]**: 400 com detalhe do erro para inexistente |
+| `POST /sessoes/{id}/mensagens` | 200 + `resposta` + `confirmacoes_pendentes` | corpo do contrato: `{"texto": "..."}` (aceita `mensagem` como apelido interno); varre os eventos do turno e sincroniza a tabela de pendências; cada pendência no formato do contrato `{id, acao, detalhes}`; `resposta` vazia se parou em confirmação |
+| `POST /sessoes/{id}/confirmacoes` | 200 (mesmo formato) / 409 | corpo `{"id": "...", "confirmado": bool}`; valida id pendente da sessão (nunca reaproveitável); injeta FunctionResponse/ToolConfirmation e retoma a execução; id desconhecido ou já respondido → 409 e nada executa |
+| `GET /sessoes/{id}/eventos` | 200 lista completa, em ordem | 404 se sessão não existe; serializar eventos ADK para JSON (ver `api/serializers.py`) |
+| `GET /apartamentos/{n}/reservas` | verificação, lê direto do store | lista JSON `[{codigo, area, data}]`, sem passar pelo modelo |
+| `GET /apartamentos/{n}/visitantes` | verificação, lê direto do store | lista JSON `[{nome, data}]`, sem passar pelo modelo |
 
-**[ABERTO — D9b, D9c]** Comportamentos livres (fora de escopo) a fixar:
-mensagem nova com pendência ativa (recomenda-se: processar mas manter a
-pendência; nada executa sem confirmação) e duas respostas simultâneas à mesma
-confirmação (recomenda-se: idempotência — segunda recebe 409/leitura do estado).
+**[RESOLVIDA — D9b, D9c (Fase 4); ver seção 9]** Comportamentos livres
+(fora de escopo) fixados: mensagem nova com pendência ativa processa o texto
+mantendo a pendência intacta (nada executa sem confirmação); duas respostas
+simultâneas à mesma confirmação são idempotentes — só a primeira executa, a
+segunda recebe 409.
 
 ## 6. Mapeamento do fluxo do avaliador → verificação manual
 
@@ -220,12 +221,13 @@ confirmação (recomenda-se: idempotência — segunda recebe 409/leitura do est
 | **D3b** | Tecnologia dos dados de negócio | SQLite (UNIQUE) vs JSON+lock | ✅ **RESOLVIDA: SQLite** — atomicidade nativa na gravação (Garantia 5); JSON rejeitado | Alto (Garantia 5) | Fase 2 |
 | **D4** | Restore apaga sessões? | Apagar junto / só dados | ✅ **RESOLVIDA (Fase 2): apaga também as sessões** (estado 100% inicial, documentado no comando). `uv run python -m aurora.scripts.restore` recarga reservas/visitantes dos seeds e apaga `var/aurora_sessoes.db` | Baixo | Fase 2 |
 | **D5** | Topologia de especialistas | transfer_to_agent vs single_turn | ✅ **RESOLVIDA (spike): especialistas com `mode='single_turn'`** (tool inline do principal) — a retomada de confirmação é determinística (10/10), enquanto transfer_to_agent é flaky (5/8, com no-op silencioso e `cannot transfer to itself`). Nº de especialistas: 3 (reservas, visitantes, regulamento) | Alto (Garantia 1 + 3) | Fase 1/3 |
-| **D6** | Recuperação do regulamento | Mapa capítulo→palavras-chave vs embeddings/RAG | ✅ **RESOLVIDA (Fase 3): mapa por capítulos com scoring por tokens** (`agentes/regulamento.py`, sem dependencias; responde os 2 capítulos mais relevantes). Embeddings só se a precisão falhar no passo 12 | Médio (Garantia 4) | Fase 3 |
+| **D6** | Recuperação do regulamento | Mapa capítulo→palavras-chave vs embeddings/RAG | ✅ **RESOLVIDA (Fase 3): mapa por capítulos com scoring por tokens** (`agents/regulations.py`, sem dependências; responde os 2 capítulos mais relevantes). Embeddings só se a precisão falhar no passo 12 | Médio (Garantia 4) | Fase 3 |
 | **D7** | Mecanismo de confirmação | `require_confirmation=True` (bool simples) vs `tool_context.request_confirmation` (payload/avançado) | ✅ **RESOLVIDA (spike)**: avançado com payload para manter `detalhes`; booleano como opção. Resposta = FunctionResponse para o FC `adk_request_confirmation` (id do FC long-running, extraído dos eventos; `requested_tool_confirmations` é chaveado pelo id da tool original) enviada como `new_message` no `run_async` — sem `invocation_id` explícito (ignorado quando há FR) | Alto (Garantia 1) | Fase 1 (spike) |
-| **D8** | Serialização do `GET /eventos` | Converter schema ADK p/ JSON cru vs projeção enxuta | Projeção fiel mas completa (o contrato pede "conteúdo completo"); definir campos exatos na Fase 4; conferir vazamentos | Médio — afeta vazamentos e a contagem do passo 13 | Fase 4 |
-| **D9a** | Apartamento inexistente no `POST /sessoes` | 400 / 404 / criar mesmo assim | 404 (ou 400) — comportamento livre, mas resposta explícita facilita depuração | Baixo | Fase 4 |
-| **D9b** | Mensagem nova com pendência ativa | Bloquear / processar mantendo pendência | Processar, mantendo a pendência intacta (nada executa sem confirmação) | Baixo | Fase 4 |
-| **D9c** | Duas respostas simultâneas à mesma confirmação | Livre, sem dupla execução | Idempotência no nível da pendência (segunda resposta não executa nada) | Médio | Fase 4 |
+| **D8** | Serialização do `GET /eventos` | Converter schema ADK p/ JSON cru vs projeção enxuta | ✅ **RESOLVIDA (Fase 4): projeção fiel e completa** (`api/serializers.py`: id, author, timestamp, end_of_turn, texts, function_calls, function_responses, requested_tool_confirmations, long_running_tool_ids) — os eventos trazem as chamadas de tool do passo 12 sem vazar dados de outro apartamento | Médio — afeta vazamentos e a contagem do passo 13 | Fase 4 |
+| **D9a** | Apartamento inexistente no `POST /sessoes` | 400 / 404 / criar mesmo assim | ✅ **RESOLVIDA (Fase 4): 400 com detalhe do erro** — comportamento livre, escolhido pela clareza de depuração | Baixo | Fase 4 |
+| **D9b** | Mensagem nova com pendência ativa | Bloquear / processar mantendo pendência | ✅ **RESOLVIDA (Fase 4): processa a mensagem mantendo a pendência intacta**; nada executa sem confirmação | Baixo | Fase 4 |
+| **D9c** | Duas respostas simultâneas à mesma confirmação | Livre, sem dupla execução | ✅ **RESOLVIDA (Fase 4): idempotência no nível da pendência** — tabela `confirmations` como fonte de verdade + claim atômico (UPDATE condicional pending→answered); a segunda resposta recebe 409 e não executa nada | Médio | Fase 4 |
+| **D9d** | Runner novo por turno (concorrência do passo 14) | Runner global único / Runner novo por rota | ✅ **RESOLVIDA (Fase 4): cada rota de mensagem/confirmação cria um Runner novo** (mesmo banco de sessões SQLite); escrituras concorrentes em sessões diferentes não se pisam e o restart é fiel à Garantia 3 | Médio (passo 14) | Fase 4 |
 
 Decisões que **não** estão em aberto (já tomadas pelo enunciado ou por
 recomendação forte): contrato REST fixo; FastAPI; SQLite como storage;
@@ -233,7 +235,7 @@ ferramentas de dados de negócio sem parâmetro de apartamento; `dados/` apenas
 leitura; exclusividade via índice UNIQUE PARCIAL `(area, data) WHERE ativo=1`
 no INSERT — nota de design: como os cancelados conservam a fila (códigos não
 reutilizáveis), um UNIQUE global bloquearia re-reservar; o índice parcial
-mantém a exclusividade solo entre ativas (validado 18/18 na Fase 2).
+mantém a exclusividade somente entre ativas (validado 18/18 na Fase 2).
 
 **Achado Fase 3 (ADK 2.9.2, topologia single_turn + confirmação)**: depois
 de RESOLVER uma confirmação, a sessão continua a invocação do sub-agente — os
@@ -242,6 +244,47 @@ Não impede o fluxo do enunciado: cada `/chat/{apartamento}` é uma sessão
 própria e, dentro dela, o avaliador só exercita reservas (os pedidos de
 visitante/regulamento vêm de apartamentos/sessões distintos). Documentado em
 `spikes/001-confirmacao-persistida/README.md`; verificado 14/14.
+
+**Achado Fase 4 (ADK 2.9.2, topologia single_turn)**: depois de RESOLVER
+uma confirmação, o último evento da sessão é do especialista e o
+`_agent_router` pode re-eleger o especialista para os próximos textos,
+prendendo a sessão no último domínio usado (a S1 do avaliador mistura
+reservas, visitante e regulamento). Mecanismo vencedor, verificado em
+`agents/builder.py`:
+
+1. `disallow_transfer_to_parent=True` nos três especialistas: o router só
+   mantém um sub-agente no comando do turno seguinte se ele for
+   "transferível" para a árvore inteira (`is_transferable_across_agent_tree`
+   exige a flag `False` no agente e em todos os ancestrais). Com a flag, os
+   eventos dos especialistas são ignorados na varredura e a resposta cai no
+   principal de forma DETERMINÍSTICA. Sem ela a falha era intermitente
+   (~4/20 em `verificar_agentes`): a varredura depende da ordem dos eventos
+   e o `DatabaseSessionService` ordena por `(timestamp DESC, id DESC)` com
+   id UUID aleatório, então eventos empatados saem em ordem arbitrária.
+2. `anchor_root()` (fim de cada turno resolvido) anexa um evento sintético
+   `Event(author='main_agent')` com timestamp estritamente maior que o maior
+   já gravado (`max(timestamps) + 1e-3`), garantindo que o último evento do
+   turno seja do principal. Um turno que terminou pedindo confirmação NÃO é
+   ancorado: o último evento precisa continuar sendo o
+   `adk_request_confirmation` do especialista.
+
+A retomada de confirmações não depende de qual agente o router escolha: ela
+vem do `FunctionResponse` da confirmação pendente
+(`find_matching_function_call`), não da varredura de eventos (verificado
+10/10 no spike 002). Resultados após o fix, com execução real:
+`verificar_api` 20/20 + 12/12 (31 checks, 0 falhas), `verificar_agentes`
+10/10 (23 checks) e o cenário de mistura de domínios 40/40.
+
+**Verificação Fase 5 (fluxo do avaliador)**: os passos 1-14 foram executados
+também contra o `uvicorn` real (HTTP em `localhost:8000`, sem transporte
+ASGI), incluindo o passo 13 (Ctrl+C, subir de novo) e o passo 14 com as duas
+aprovações simultâneas em `curl ... & curl ... --wait`. Resultado: 1-12 com
+30 checks e 0 falhas; passo 13 com 80 eventos idênticos antes/depois do
+restart, novas mensagens funcionando e códigos novos sem colisão; passo 14
+com dois `200` e exatamente 1 reserva do salão em 2030-05-11 (a outra
+resposta venceu com um erro de negócio normal, `date_taken`, sem 500).
+
+Documentado em `spikes/002-transfer-topology/README.md`.
 
 ## 10. Pendências de pesquisa (links oficiais)
 
