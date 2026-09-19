@@ -391,6 +391,7 @@ grava e a outra recebe a recusa normal.
 - Sem `GEMINI_API_KEY`, o projeto usa um modelo fake determinista e as três
   verificações rodam offline, sem rede: `verificar_storage` 18 ok,
   `verificar_agentes` 23 checks e `verificar_api` 31 checks.
-- `verificar_storage` usa o banco de negócio real — rode `restore` depois dele.
+- `verificar_storage` e `verificar_api` usam bancos próprios em `var/` — não
+  encostam no banco de negócio nem nas sessões reais.
 - `spikes/` documenta as decisões de topologia e o comportamento observado do
   ADK 2.9.2; não faz parte do fluxo da API.

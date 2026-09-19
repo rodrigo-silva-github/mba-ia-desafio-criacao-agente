@@ -25,7 +25,7 @@ import os
 import sys
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
+_ROOT = Path(__file__).resolve().parents[3]  # raiz do repositório
 os.environ["BUSINESS_DB_PATH"] = str(_ROOT / "var" / "verif_api_dados.db")
 os.environ["SESSIONS_DB_PATH"] = str(_ROOT / "var" / "verif_api_sessoes.db")
 

@@ -12,9 +12,18 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
 
-from .. import config
-from ..storage import db, reservas_store, visitantes_store
+# Banco próprio: este script cria e apaga reservas, e não pode sujar o banco de
+# negócio real (`var/aurora_dados.db`), que é o que as rotas de verificação do
+# avaliador leem. Precisa vir antes de importar `config`.
+_ROOT = Path(__file__).resolve().parents[3]  # raiz do repositório
+os.environ["BUSINESS_DB_PATH"] = str(_ROOT / "var" / "verif_storage_dados.db")
+# O cenário de seed chama o `restore`, que também apaga as sessões do ADK.
+os.environ["SESSIONS_DB_PATH"] = str(_ROOT / "var" / "verif_storage_sessoes.db")
+
+from .. import config  # noqa: E402
+from ..storage import db, reservas_store, visitantes_store  # noqa: E402
 
 PASS = 0
 FAIL = 0
