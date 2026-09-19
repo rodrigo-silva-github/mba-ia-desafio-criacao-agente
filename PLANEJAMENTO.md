@@ -218,7 +218,7 @@ confirmação (recomenda-se: idempotência — segunda recebe 409/leitura do est
 | **D2** | Modelo Gemini de cada agente | flash vs pro; por agente ou um só | Modelo flash (custo/quota) para todos; revisar limites ativos no AI Studio do aluno | Médio — quota e custo; dezenas de chamadas | Fase 1/3 |
 | **D3a** | Layout do armazenamento | 1 SQLite único (sessões+dados+pendências) vs 2 bancos separados | Dois bancos separados (sessões ADK `/ dados de negócio) para isolar o schema do ADK das nossas tabelas; sessões com `sqlite+aiosqlite://` (driver async obrigatório) | Baixo | Fase 1/2 |
 | **D3b** | Tecnologia dos dados de negócio | SQLite (UNIQUE) vs JSON+lock | ✅ **RESOLVIDA: SQLite** — atomicidade nativa na gravação (Garantia 5); JSON rejeitado | Alto (Garantia 5) | Fase 2 |
-| **D4** | Restore apaga sessões? | Apagar junto / só dados | Apagar também as sessões (estado 100% inicial), mas documentar; comportamento é livre | Baixo | Fase 2 |
+| **D4** | Restore apaga sessões? | Apagar junto / só dados | ✅ **RESOLVIDA (Fase 2): apaga também as sessões** (estado 100% inicial, documentado no comando). `uv run python -m aurora.scripts.restore` recarga reservas/visitantes dos seeds e apaga `var/aurora_sessoes.db` | Baixo | Fase 2 |
 | **D5** | Topologia de especialistas | transfer_to_agent vs single_turn | ✅ **RESOLVIDA (spike): especialistas com `mode='single_turn'`** (tool inline do principal) — a retomada de confirmação é determinística (10/10), enquanto transfer_to_agent é flaky (5/8, com no-op silencioso e `cannot transfer to itself`). Nº de especialistas: 3 (reservas, visitantes, regulamento) | Alto (Garantia 1 + 3) | Fase 1/3 |
 | **D6** | Recuperação do regulamento | Mapa capítulo→palavras-chave vs embeddings/RAG | Mapa por seção com busca por termos (sem dependência extra); trocar por embeddings só se a precisão falhar no passo 12 | Médio (Garantia 4) | Fase 3 |
 | **D7** | Mecanismo de confirmação | `require_confirmation=True` (bool simples) vs `tool_context.request_confirmation` (payload/avançado) | ✅ **RESOLVIDA (spike)**: avançado com payload para manter `detalhes`; booleano como opção. Resposta = FunctionResponse para o FC `adk_request_confirmation` (id do FC long-running, extraído dos eventos; `requested_tool_confirmations` é chaveado pelo id da tool original) enviada como `new_message` no `run_async` — sem `invocation_id` explícito (ignorado quando há FR) | Alto (Garantia 1) | Fase 1 (spike) |
@@ -230,7 +230,10 @@ confirmação (recomenda-se: idempotência — segunda recebe 409/leitura do est
 Decisões que **não** estão em aberto (já tomadas pelo enunciado ou por
 recomendação forte): contrato REST fixo; FastAPI; SQLite como storage;
 ferramentas de dados de negócio sem parâmetro de apartamento; `dados/` apenas
-leitura; exclusividade via `UNIQUE(area, data)` no INSERT.
+leitura; exclusividade via índice UNIQUE PARCIAL `(area, data) WHERE ativo=1`
+no INSERT — nota de design: como os cancelados conservam a fila (códigos não
+reutilizáveis), um UNIQUE global bloquearia re-reservar; o índice parcial
+mantém a exclusividade solo entre ativas (validado 18/18 na Fase 2).
 
 ## 10. Pendências de pesquisa (links oficiais)
 

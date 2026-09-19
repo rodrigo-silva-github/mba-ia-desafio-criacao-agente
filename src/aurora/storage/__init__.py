@@ -1,0 +1,1 @@
+"""Armazenamento dos dados de negócio (SQLite em var/)."""
