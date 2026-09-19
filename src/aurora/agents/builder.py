@@ -88,20 +88,40 @@ REGULATIONS_INSTRUCTION = (
 
 
 def _models() -> dict[str, str]:
-    if config.GEMINI_API_KEY:
-        from google.adk.models.gemini_llm import get_gemini_models
+    """Modelos de cada agente (por agente; sem chave, modelo fake determinista).
 
-        available = get_gemini_models()
-        mapping = {"main": config.MAIN_MODEL, "reservations": config.RESERVATIONS_MODEL,
-                   "visitors": config.VISITORS_MODEL, "regulations": config.REGULATIONS_MODEL}
-        for key, name in mapping.items():
-            if name not in available:
-                mapping[key] = next(
-                    (n for n in available if "flash" in n), next(iter(available), "gemini-2.5-flash")
-                )
-        return mapping
-    LLMRegistry.register(FakeLlm)
-    return dict(FAKE_MODELS)
+    Com `GEMINI_API_KEY`, usa os nomes configurados no `.env` e valida cada um
+    com `LLMRegistry.resolve` — o ADK 2.9.2 aceita qualquer nome do padrão
+    `gemini-*` (`google_llm.Gemini.supported_models`) e NÃO expõe um helper que
+    liste os modelos disponíveis no projeto. A disponibilidade real e a quota
+    são conferidas no Google AI Studio e aparecem na primeira chamada ao
+    modelo; um nome fora do padrão falha aqui, com mensagem apontando a
+    variável do `.env` a corrigir.
+    """
+    if not config.GEMINI_API_KEY:
+        LLMRegistry.register(FakeLlm)
+        return dict(FAKE_MODELS)
+
+    mapping = {
+        "MAIN_MODEL": config.MAIN_MODEL,
+        "RESERVATIONS_MODEL": config.RESERVATIONS_MODEL,
+        "VISITORS_MODEL": config.VISITORS_MODEL,
+        "REGULATIONS_MODEL": config.REGULATIONS_MODEL,
+    }
+    for env_name, model_name in mapping.items():
+        try:
+            LLMRegistry.resolve(model_name)
+        except ValueError as exc:  # nome fora de qualquer padrão suportado
+            raise ValueError(
+                f"Modelo inválido em {env_name}: {model_name!r}. "
+                "Ajuste essa variável no .env (veja .env.example)."
+            ) from exc
+    return {
+        "main": config.MAIN_MODEL,
+        "reservations": config.RESERVATIONS_MODEL,
+        "visitors": config.VISITORS_MODEL,
+        "regulations": config.REGULATIONS_MODEL,
+    }
 
 
 def build_agents(models: dict[str, str]) -> dict[str, Agent]:
