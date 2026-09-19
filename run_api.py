@@ -1,7 +1,7 @@
 """Inicialização da API do Residencial Aurora.
 
 Uso:  uv run python run_api.py   (servidor em http://localhost:8000)
-Ver README.md -> Fase 4 (API).
+Ver README.md -> Como rodar.
 """
 
 import uvicorn
