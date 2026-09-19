@@ -147,7 +147,7 @@ caminho fica determinístico. O spike que comparou as duas topologias está em
 | Tool | Onde | Confirmação |
 |---|---|---|
 | `book_area(area, data)` | `src/aurora/agents/tools.py` | Só quando a área tem taxa > 0; taxa 0 grava direto. |
-| `cancel_reservation(codigo)` | `src/aurora/agents/tools.py` | Nunca (cancelamento próprio: não gera cobrança nem libera acesso). |
+| `cancel_reservation(codigo ou area+data)` | `src/aurora/agents/tools.py` | Nunca (cancelamento próprio: não gera cobrança nem libera acesso). Quando o morador descreve a reserva pela área e data, o código é resolvido no banco. |
 | `list_reservations()` | `src/aurora/agents/tools.py` | Nunca (leitura). |
 | `check_availability(area, data)` | `src/aurora/agents/tools.py` | Nunca; devolve apenas livre/ocupada, nunca de quem é a reserva. |
 | `authorize_visit(nome, data)` | `src/aurora/agents/tools.py` | Sempre (libera acesso). |
@@ -236,6 +236,11 @@ essa tabela. Nenhuma frase do morador é caminho para executar a ação — e o
 `payload` aprovado é a fonte dos dados gravados, então o que o morador aprovou é
 exatamente o que executa.
 
+O id da área também é resolvido em código: o morador (e o modelo) escrevem
+"salão de festas", e a tool normaliza acento, caixa e separador antes de validar
+(`_canonical_area`, em `tools.py`), de modo que `detalhes` sempre traz o id
+canônico — `salao-de-festas`.
+
 ### Garantia 2 — cada sessão pertence a um apartamento
 
 **Onde:** `src/aurora/agents/builder.py`, `src/aurora/agents/tools.py`,
@@ -311,10 +316,19 @@ O regulamento é indexado por capítulos e a tool devolve **apenas** os capítul
 mais relevantes para a consulta, recortados (`regulations.py`, `search`):
 
 ```python
-best = [c for score, c in ranked if score > 0][:max_chapters]
+best = [c for score, c in ranked if score >= limite][:max_chapters]
 ...
 return "\n\n".join(excerpts[:max_chapters])
 ```
+
+A pontuação é ponderada por IDF (token raro vale mais que token comum) e dá
+peso dobrado ao título do capítulo. Sem isso, um capítulo longo e genérico
+("Direitos e deveres dos moradores") vencia consultas sobre assuntos que não são
+dele só por ter muitos tokens — e o texto dele entrava no histórico. Um segundo
+capítulo só é anexado se chegar a 75% do melhor score: é preferível responder
+com um capítulo só a arrastar assunto alheio. Há ainda um mapa pequeno de
+sinônimos da fala do morador ("cachorro" → animais, "bicicleta" → bicicletário)
+que afeta apenas a busca, nunca o texto devolvido.
 
 Só o especialista de regulamento tem essa tool (`builder.py`,
 `tools=tools.TOOLS_REGULAMENTO`), e o agente principal não recebe o regulamento
@@ -368,13 +382,15 @@ banco dentro da transação de escrita, não uma conferência prévia feita pelo
 agente. Com duas aprovações simultâneas disputando a mesma área e data, uma
 grava e a outra recebe a recusa normal.
 
-## Limitações conhecidas
+## Validação
 
-- As verificações deste repositório (`verificar_storage`, `verificar_agentes`,
-  `verificar_api`) rodam com o modelo fake determinista, porque o ambiente de
-  desenvolvimento não tem chave do Google AI Studio. Com `GEMINI_API_KEY`
-  preenchida a API sobe e as chamadas chegam ao Gemini real; a validação do
-  fluxo completo com o modelo real é o próximo passo.
+- O fluxo do avaliador (passos 1 a 14) foi executado contra o `uvicorn` real,
+  com `gemini-2.5-flash` do Google AI Studio: **56 verificações, 0 falhas** —
+  38 nos passos 1–12 e 18 nos passos 13–14, incluindo o reinício da API sem
+  restaurar os dados e as duas aprovações simultâneas disputando o mesmo slot.
+- Sem `GEMINI_API_KEY`, o projeto usa um modelo fake determinista e as três
+  verificações rodam offline, sem rede: `verificar_storage` 18 ok,
+  `verificar_agentes` 23 checks e `verificar_api` 31 checks.
 - `verificar_storage` usa o banco de negócio real — rode `restore` depois dele.
 - `spikes/` documenta as decisões de topologia e o comportamento observado do
   ADK 2.9.2; não faz parte do fluxo da API.

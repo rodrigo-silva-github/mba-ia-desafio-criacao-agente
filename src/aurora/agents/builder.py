@@ -30,7 +30,7 @@ from __future__ import annotations
 from google.adk.agents import Agent
 from google.adk.apps import App, ResumabilityConfig
 from google.adk.events import Event
-from google.adk.models import LLMRegistry
+from google.adk.models import BaseLlm, LLMRegistry
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
 
@@ -58,13 +58,28 @@ MAIN_INSTRUCTION = (
     "morador automaticamente; espere até que essa confirmação seja resolvida."
 )
 
+
+def _areas_hint() -> str:
+    """Áreas conhecidas com id, nome e taxa (o modelo deve mandar o id)."""
+    taxas = config.load_areas()
+    nomes = config.load_area_names()
+    itens = []
+    for aid, taxa in taxas.items():
+        preco = f"taxa {int(taxa)}" if taxa > 0 else "sem taxa"
+        itens.append(f"{aid} ({nomes.get(aid, aid)}, {preco})")
+    return "; ".join(itens)
+
+
 RESERVATIONS_INSTRUCTION = (
     "Você é o especialista de reservas de áreas comuns do Aurora.\n"
+    f"- Áreas conhecidas (use sempre o id): {_areas_hint()}.\n"
     "- book_area(area, data): novas reservas. O sistema pede confirmação ao "
     "morador quando a área gera cobrança; áreas sem taxa são reservadas direto. "
-    "- cancel_reservation(codigo): cancelamentos (não pede confirmação).\n"
+    "- cancel_reservation(codigo ou area+data): cancelamentos do próprio "
+    "apartamento (não pede confirmação). Se o morador descrever a reserva pela "
+    "área e pela data, chame a tool com area e data — não peça o código a ele.\n"
     "- check_availability(area, data): disponibilidade (só livre ou ocupada).\n"
-    "- list_reservations(): para ver as do apartamento da sessão.\n"
+    "- list_reservations(): para ver as do apartamento da sessão. "
     "O apartamento da sessão é fixo (não o peça ao usuário); a tool já o "
     "injecta."
 )
@@ -87,28 +102,28 @@ REGULATIONS_INSTRUCTION = (
 )
 
 
-def _models() -> dict[str, str]:
-    """Modelos de cada agente (por agente; sem chave, modelo fake determinista).
+def _models() -> dict[str, str | BaseLlm]:
+    """Modelos de cada agente.
 
-    Com `GEMINI_API_KEY`, usa os nomes configurados no `.env` e valida cada um
-    com `LLMRegistry.resolve` — o ADK 2.9.2 aceita qualquer nome do padrão
-    `gemini-*` (`google_llm.Gemini.supported_models`) e NÃO expõe um helper que
-    liste os modelos disponíveis no projeto. A disponibilidade real e a quota
-    são conferidas no Google AI Studio e aparecem na primeira chamada ao
-    modelo; um nome fora do padrão falha aqui, com mensagem apontando a
-    variável do `.env` a corrigir.
+    Com `GEMINI_API_KEY` (caminho do entregável) usa os nomes configurados no
+    `.env` e valida cada um com `LLMRegistry.resolve` — o ADK 2.9.2 aceita
+    qualquer nome do padrão `gemini-*` (`google_llm.Gemini.supported_models`) e
+    NÃO expõe helper que liste os modelos do projeto; a disponibilidade real e a
+    quota são conferidas no Google AI Studio e aparecem na primeira chamada.
+    Sem chave, registra o modelo fake determinista (testes offline).
     """
+    mapping = {
+        "main": (config.MAIN_MODEL, "MAIN_MODEL"),
+        "reservations": (config.RESERVATIONS_MODEL, "RESERVATIONS_MODEL"),
+        "visitors": (config.VISITORS_MODEL, "VISITORS_MODEL"),
+        "regulations": (config.REGULATIONS_MODEL, "REGULATIONS_MODEL"),
+    }
+
     if not config.GEMINI_API_KEY:
         LLMRegistry.register(FakeLlm)
         return dict(FAKE_MODELS)
 
-    mapping = {
-        "MAIN_MODEL": config.MAIN_MODEL,
-        "RESERVATIONS_MODEL": config.RESERVATIONS_MODEL,
-        "VISITORS_MODEL": config.VISITORS_MODEL,
-        "REGULATIONS_MODEL": config.REGULATIONS_MODEL,
-    }
-    for env_name, model_name in mapping.items():
+    for _, (model_name, env_name) in mapping.items():
         try:
             LLMRegistry.resolve(model_name)
         except ValueError as exc:  # nome fora de qualquer padrão suportado
@@ -116,15 +131,10 @@ def _models() -> dict[str, str]:
                 f"Modelo inválido em {env_name}: {model_name!r}. "
                 "Ajuste essa variável no .env (veja .env.example)."
             ) from exc
-    return {
-        "main": config.MAIN_MODEL,
-        "reservations": config.RESERVATIONS_MODEL,
-        "visitors": config.VISITORS_MODEL,
-        "regulations": config.REGULATIONS_MODEL,
-    }
+    return {key: name for key, (name, _) in mapping.items()}
 
 
-def build_agents(models: dict[str, str]) -> dict[str, Agent]:
+def build_agents(models: dict[str, str | BaseLlm]) -> dict[str, Agent]:
     """Agente principal + 3 especialistas (single_turn).
 
     `include_contents="default"` nos especialistas é obrigatório: em agentes
