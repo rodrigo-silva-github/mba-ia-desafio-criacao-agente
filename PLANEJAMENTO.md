@@ -4,10 +4,10 @@
 > Arquitetura, Garantias e Como rodar) substituindo este enunciado — este
 > arquivo não faz parte da entrega e pode ser removido antes do push final.
 >
-> Todos os pontos de decisão em aberto estão marcados como **[ABERTO]** no
-> corpo do texto e consolidados na seção "Pontos de decisão em aberto" no fim
-> deste documento. Recomenda-se resolver os marcados como "decidir antes da
-> Fase 1/2" antes de codar.
+> Todos os pontos de decisão estavam marcados como **[ABERTO]** no corpo do
+> texto e consolidados na seção "Pontos de decisão em aberto" no fim deste
+> documento. **Não há mais nenhum em aberto**: as decisões D1–D9d estão
+> resolvidas na §9, com o arquivo onde cada uma vive.
 
 ---
 
@@ -22,8 +22,10 @@ exclusividade de reserva no instante da gravação.
 ## 2. Restrições e tecnologias (checklist fixo)
 
 - Python 3.12+, projeto gerenciado por `uv` (`pyproject.toml` + `uv.lock` versionados).
-- Google ADK série 2, versão **exata** fixada, >= 2.2.0. **[ABERTO: qual versão — ver D1]**
-- Modelos Gemini com chave do Google AI Studio (varia por projeto; dezenas de chamadas no fluxo do avaliador). **[ABERTO: quais modelos — ver D2]**
+- Google ADK série 2, versão **exata** fixada: **2.9.2** (D1 resolvida).
+- Modelos Gemini com chave do Google AI Studio (varia por projeto; dezenas de
+  chamadas no fluxo do avaliador). Decisão D2: `gemini-2.5-flash` nos quatro
+  agentes, configurável por variável no `.env`.
 - Framework web livre (padrão do curso: FastAPI).
 - Armazenamento livre; se externo, sobe com comando documentado.
 - Nenhuma chave versionada: `.env` fora do Git, `.env.example` versionado com nomes sem valores.
@@ -42,29 +44,28 @@ exclusividade de reserva no instante da gravação.
 ```
 src/aurora/
 ├── __init__.py
-├── config.py            # lê .env (GEMINI_API_KEY, modelo(s), caminhos)
+├── config.py                 # lê .env (chave, modelo de cada agente, caminhos dos bancos)
 ├── api/
-│   ├── main.py          # FastAPI, rotas do contrato + verificação
-│   └── schemas.py       # pydantic: payloads de sessão, mensagem, confirmação
+│   ├── main.py               # FastAPI: rotas do contrato + verificação; Runner por turno
+│   └── serializers.py        # eventos do ADK -> JSON (D8)
 ├── agents/
-│   ├── main_agent.py    # agente principal (roteia, NÃO tem regulamento)
-│   ├── reservas_agent.py# especialista: reservas/cancelamentos
-│   ├── visitantes_agent.py # especialista: autorizações
-│   └── regulamento_agent.py # especialista: dúvidas sobre o regulamento
-├── tools/
-│   ├── reservas.py      # tools: consultar_agenda, reservar, cancelar
-│   ├── visitantes.py    # tools: autorizar_visitante, listar_visitantes
-│   └── regulamento.py   # tool: consultar_regulamento(tema) — recuperação por capítulo
+│   ├── builder.py            # principal + 3 especialistas, App/Runner, anchor_root
+│   ├── tools.py              # tools de negócio (apartamento vem da sessão)
+│   ├── regulations.py        # índice do regulamento por capítulos + busca (D6)
+│   ├── confirmations.py      # lê as confirmações pendentes nos eventos
+│   └── fake_llm.py           # modelo fake determinista (sem chave de API)
 ├── storage/
-│   ├── db.py            # conexão SQLite, schema, DDL
-│   ├── reservas_store.py# leitura/gravação atômica (UNIQUE área+data)
-│   └── visitantes_store.py
-├── sessions.py          # criação de sessão ADK + vínculo apartamento (session.state)
-├── confirmacoes.py      # tabela de confirmações pendentes (id, sessão, ação, detalhes, status)
-└── runner.py            # monta App ADK (agentes, session_service SQLite, retomada)
-scripts/
-├── restore.py           # restaura dados iniciais (reservas/visitantes)
-└── run_api.py           # uvicorn app em localhost:8000   [ou via task no pyproject]
+│   ├── db.py                 # conexão SQLite (WAL, busy_timeout), DDL
+│   ├── reservas_store.py     # gravação atômica: UNIQUE parcial (area, data) WHERE ativo = 1
+│   ├── visitantes_store.py
+│   ├── sessions_store.py     # sessão ADK -> apartamento
+│   └── confirmations_store.py# pendências (claim atômico pending -> answered)
+└── scripts/
+    ├── restore.py            # volta reservas/visitantes ao seed e apaga as sessões
+    ├── verificar_storage.py
+    ├── verificar_agentes.py
+    └── verificar_api.py
+run_api.py                    # uvicorn em http://localhost:8000
 ```
 
 ### 4.1 Topologia de agentes
@@ -78,18 +79,20 @@ scripts/
 - **Especialista de Regulamento**: única porta de acesso ao regulamento,
   com a tool que devolve só o trecho relevante.
 
-**[ABERTO — D5]** Quantidade exata de especialistas (mínimo 2; proposta: 3) e
-forma de acionamento: transferência (`transfer_to_agent`) vs. tool que
-retorna resultado de subagente vs. subagentes autônomos. A escolha afeta
-diretamente o roteamento da confirmação (ver D7) — decidir na Fase 3 após o
-spike da Fase 1.
+**[RESOLVIDA — D5]** Três especialistas (reservas, visitantes, regulamento),
+todos acionados como tool inline do principal (`mode='single_turn'` +
+`disallow_transfer_to_parent=True`): é o que torna a retomada da confirmação
+determinística, enquanto `transfer_to_agent` se mostrou intermitente no spike.
+Vive em `src/aurora/agents/builder.py`.
 
 ### 4.2 Armazenamento
 
 - **Sessões ADK** → `DatabaseSessionService` (SQLite) do próprio ADK.
   Sobrevive ao restart da API (Garantia 3) e é o que o README do enunciado
   indica que funciona com confirmação quando a resposta chega ao agente certo.
-  **[ABERTO — D3a]** arquivo `sessions.db` separado do banco de negócio.
+  ✅ **RESOLVIDA (D3a):** dois bancos separados — sessões do ADK em
+  `var/aurora_sessoes.db` (`sqlite+aiosqlite://`, driver async obrigatório) e
+  dados de negócio em `var/aurora_dados.db` (ver `src/aurora/config.py`).
 - **Dados de negócio** (reservas/visitantes) → SQLite próprio com
   `UNIQUE(area, data)` na tabela de reservas: a exclusividade vale **no
   instante do INSERT**, não numa conferência prévia (Garantia 5). Conflito
@@ -97,8 +100,9 @@ spike da Fase 1.
   Cancela-se a reserva por `DELETE`; a geração de código novo (`RSV-####`)
   consulta o conjunto de códigos existentes **incluindo cancelados**
   (regra 5), com `UNIQUE(codigo)` como trava final.
-  **[ABERTO — D3b]** alternativa JSON+lock foi considerada e rejeitada por
-  não dar atomicidade nativa; confirmar SQLite como decisão final.
+  ✅ **RESOLVIDA (D3b): SQLite.** A alternativa JSON+lock foi considerada e
+  rejeitada por não dar atomicidade nativa; o índice UNIQUE parcial
+  `(area, data) WHERE ativo = 1` garante a exclusividade no INSERT.
 - Os arquivos de `dados/` são **somente leitura**: usados como seed no
   restore e nunca escritos em runtime.
 
@@ -216,8 +220,8 @@ segunda recebe 409.
 | # | Decisão | Opções | Recomendação | Impacto | Resolver antes de |
 |---|---|---|---|---|---|
 | **D1** | Versão exata do ADK a fixar | 2.2.0 (curso) / 2.9.1 (testada pelos autores) / 2.9.2 (mais alta estável) | ✅ **RESOLVIDA (spike): 2.9.2 fixada e validada** — confirmação + sessão persistida SQLite funcionam com topologia single_turn | Alto | Fase 0/1 |
-| **D2** | Modelo Gemini de cada agente | flash vs pro; por agente ou um só | Modelo flash (custo/quota) para todos; revisar limites ativos no AI Studio do aluno | Médio — quota e custo; dezenas de chamadas | Fase 1/3 |
-| **D3a** | Layout do armazenamento | 1 SQLite único (sessões+dados+pendências) vs 2 bancos separados | Dois bancos separados (sessões ADK `/ dados de negócio) para isolar o schema do ADK das nossas tabelas; sessões com `sqlite+aiosqlite://` (driver async obrigatório) | Baixo | Fase 1/2 |
+| **D2** | Modelo Gemini de cada agente | flash vs pro; por agente ou um só | ✅ **RESOLVIDA: `gemini-2.5-flash` nos quatro agentes** (variável por agente no `.env`, validada na construção do app) | Médio — quota e custo; dezenas de chamadas | Fase 1/3 |
+| **D3a** | Layout do armazenamento | 1 SQLite único (sessões+dados+pendências) vs 2 bancos separados | ✅ **RESOLVIDA: dois bancos separados** (sessões ADK `/ dados de negócio) para isolar o schema do ADK das nossas tabelas; sessões com `sqlite+aiosqlite://` (driver async obrigatório) | Baixo | Fase 1/2 |
 | **D3b** | Tecnologia dos dados de negócio | SQLite (UNIQUE) vs JSON+lock | ✅ **RESOLVIDA: SQLite** — atomicidade nativa na gravação (Garantia 5); JSON rejeitado | Alto (Garantia 5) | Fase 2 |
 | **D4** | Restore apaga sessões? | Apagar junto / só dados | ✅ **RESOLVIDA (Fase 2): apaga também as sessões** (estado 100% inicial, documentado no comando). `uv run python -m aurora.scripts.restore` recarga reservas/visitantes dos seeds e apaga `var/aurora_sessoes.db` | Baixo | Fase 2 |
 | **D5** | Topologia de especialistas | transfer_to_agent vs single_turn | ✅ **RESOLVIDA (spike): especialistas com `mode='single_turn'`** (tool inline do principal) — a retomada de confirmação é determinística (10/10), enquanto transfer_to_agent é flaky (5/8, com no-op silencioso e `cannot transfer to itself`). Nº de especialistas: 3 (reservas, visitantes, regulamento) | Alto (Garantia 1 + 3) | Fase 1/3 |
@@ -240,10 +244,10 @@ mantém a exclusividade somente entre ativas (validado 18/18 na Fase 2).
 **Achado Fase 3 (ADK 2.9.2, topologia single_turn + confirmação)**: depois
 de RESOLVER uma confirmação, a sessão continua a invocação do sub-agente — os
 próximos textos do morador entram NO MESMO especialista (o root é cancelado).
-Não impede o fluxo do enunciado: cada `/chat/{apartamento}` é uma sessão
-própria e, dentro dela, o avaliador só exercita reservas (os pedidos de
-visitante/regulamento vêm de apartamentos/sessões distintos). Documentado em
-`spikes/001-confirmacao-persistida/README.md`; verificado 14/14.
+Na época isso não impedia o fluxo do enunciado; na Fase 4 ficou claro que
+prejudica qualquer sessão que misture domínios (a S1 do avaliador mistura
+reservas, visitante e regulamento), e o mecanismo da Fase 4 abaixo resolve.
+Documentado em `spikes/001-confirmacao-persistida/README.md`; verificado 14/14.
 
 **Achado Fase 4 (ADK 2.9.2, topologia single_turn)**: depois de RESOLVER
 uma confirmação, o último evento da sessão é do especialista e o
@@ -275,14 +279,27 @@ vem do `FunctionResponse` da confirmação pendente
 `verificar_api` 20/20 + 12/12 (31 checks, 0 falhas), `verificar_agentes`
 10/10 (23 checks) e o cenário de mistura de domínios 40/40.
 
-**Verificação Fase 5 (fluxo do avaliador)**: os passos 1-14 foram executados
-também contra o `uvicorn` real (HTTP em `localhost:8000`, sem transporte
-ASGI), incluindo o passo 13 (Ctrl+C, subir de novo) e o passo 14 com as duas
-aprovações simultâneas em `curl ... & curl ... --wait`. Resultado: 1-12 com
-30 checks e 0 falhas; passo 13 com 80 eventos idênticos antes/depois do
-restart, novas mensagens funcionando e códigos novos sem colisão; passo 14
-com dois `200` e exatamente 1 reserva do salão em 2030-05-11 (a outra
-resposta venceu com um erro de negócio normal, `date_taken`, sem 500).
+**Verificação Fase 5 (fluxo do avaliador, modelo fake)**: os passos 1-14 foram
+executados contra o `uvicorn` real (HTTP em `localhost:8000`, sem transporte
+ASGI), com o modelo fake determinista, incluindo o passo 13 (Ctrl+C, subir de
+novo) e o passo 14 com as duas aprovações simultâneas em
+`curl ... & curl ... --wait`. Resultado: 1-12 com 30 checks e 0 falhas; passo 13
+com 80 eventos idênticos antes/depois do restart, novas mensagens funcionando e
+códigos novos sem colisão; passo 14 com dois `200` e exatamente 1 reserva do
+salão em 2030-05-11 (a outra resposta venceu com um erro de negócio normal,
+`date_taken`, sem 500).
+
+**Verificação com Gemini real (`gemini-2.5-flash`, Google AI Studio)**: os
+passos 1-14 foram repetidos contra o `uvicorn` real com o LLM de verdade —
+38 checks nos passos 1-12 e 18 nos passos 13-14 (reinício real da API sem
+restore e as duas aprovações simultâneas), 0 falhas. Quatro defeitos apareceram
+só aqui, nenhum visível no modelo fake: id da área em linguagem natural
+("Salão de festas" em vez de `salao-de-festas`), cancelamento por descrição (o
+modelo pedia o código ao morador), vazamento do Capítulo II numa consulta sobre
+a piscina (score sem IDF e sem corte sobre o melhor) e sessão presa no
+especialista quando uma mensagem de texto chegava com confirmação pendente
+(re-ancoragem no principal antes do turno). Detalhes no README (seção
+"Validação") e no MR #5.
 
 Documentado em `spikes/002-transfer-topology/README.md`.
 
