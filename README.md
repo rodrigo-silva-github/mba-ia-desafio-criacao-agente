@@ -45,8 +45,9 @@ modelo Gemini configurado no `.env`.
 
 ### Variáveis de ambiente
 
-Todas ficam no `.env` (nunca versionado); o `.env.example` traz os nomes com os
-valores default.
+Todas ficam no `.env` (nunca versionado); o `.env.example` traz só os nomes das
+variáveis, sem valores — variável vazia (ou ausente) vale como "não informada" e
+cai no default da tabela abaixo, que é o default do código.
 
 | Variável | Propósito | Default |
 |---|---|---|
@@ -67,12 +68,15 @@ valores default.
 | `uv run python -m aurora.scripts.verificar_storage` | Verifica o armazenamento: seed, CRUD, unicidade de códigos e exclusividade da reserva. |
 | `uv run python -m aurora.scripts.verificar_agentes` | Verifica os agentes: principal + especialistas, tools e vínculo do apartamento com a sessão. |
 | `uv run python -m aurora.scripts.verificar_api` | Verifica a API de ponta a ponta, reproduzindo o fluxo de avaliação via transporte ASGI (sem subir servidor). |
+| `uv run python -m aurora.scripts.verificar_fluxo_http` | Verifica o fluxo do avaliador (passos 1 a 14) contra o `uvicorn` real, por HTTP: sobe a API numa porta própria, roda os passos 1–12, reinicia o servidor sem restaurar e roda os passos 13–14. |
 
-Os três scripts de verificação usam bancos próprios em `var/`
-(`var/verif_storage_*.db`, `var/verif_dados.db`/`var/verif_sessoes.db` e
-`var/verif_api_*.db`) — não encostam no banco de negócio real
-(`var/aurora_dados.db`) nem nas sessões reais do ADK, e não interferem no
-estado do fluxo do avaliador.
+Os quatro scripts de verificação usam bancos próprios em `var/`
+(`var/verif_storage_*.db`, `var/verif_dados.db`/`var/verif_sessoes.db`,
+`var/verif_api_*.db` e `var/verif_http_*.db`) — não encostam no banco de negócio
+real (`var/aurora_dados.db`) nem nas sessões reais do ADK, e não interferem no
+estado do fluxo do avaliador. O `verificar_fluxo_http` usa a porta 8021 (não a
+8000) e para antes de qualquer coisa se ela estiver ocupada, então também não
+atrapalha uma API que já esteja no ar.
 
 ### Rotas da API
 
@@ -389,13 +393,17 @@ grava e a outra recebe a recusa normal.
   com `gemini-2.5-flash` do Google AI Studio: **56 verificações, 0 falhas** —
   38 nos passos 1–12 e 18 nos passos 13–14, incluindo o reinício da API sem
   restaurar os dados e as duas aprovações simultâneas disputando o mesmo slot.
-- Sem `GEMINI_API_KEY`, o projeto usa um modelo fake determinista e as três
+  É reproduzível num comando só: `uv run python -m aurora.scripts.verificar_fluxo_http`
+  sobe e reinicia o `uvicorn` sozinho, por HTTP, em bancos próprios.
+- Sem `GEMINI_API_KEY`, o projeto usa um modelo fake determinista e as quatro
   verificações rodam offline, sem rede: `verificar_storage` 18 ok,
-  `verificar_agentes` 23 checks e `verificar_api` 31 checks. Com a chave
-  preenchida, os agentes usam o Gemini de verdade e o `verificar_api` passa a
-  depender do texto que o modelo devolve (não é determinístico): rode-o com a
-  chave vazia para o resultado offline reproduzível.
-- As três verificações usam bancos próprios em `var/` — não encostam no banco
+  `verificar_agentes` 23 checks, `verificar_api` 31 checks e
+  `verificar_fluxo_http` 56 checks (38 + 18). Com a chave preenchida, os agentes
+  usam o Gemini de verdade — aí o `verificar_fluxo_http` é a execução que vale,
+  e o `verificar_api` passa a depender do texto que o modelo devolve (não é
+  determinístico): rode-o com a chave vazia para o resultado offline
+  reproduzível.
+- As quatro verificações usam bancos próprios em `var/` — não encostam no banco
   de negócio nem nas sessões reais.
 - `spikes/` documenta as decisões de topologia e o comportamento observado do
   ADK 2.9.2; não faz parte do fluxo da API.

@@ -1,8 +1,8 @@
 """Configuração do projeto: variáveis de ambiente e rotas de seed.
 
 Carrega-se o `.env` se existir (nunca versionado; o `.env.example` versionado
-traz os nomes das variáveis, com a chave vazia e os defaults não secretos de
-modelo e caminhos). Os arquivos de `dados/` são só leitura:
+traz só os nomes das variáveis, sem valores — sem valor, cada uma cai no default
+do código). Os arquivos de `dados/` são só leitura:
 o estado vivo vive nos bancos SQLite de `var/` (fora do Git).
 """
 
@@ -42,11 +42,13 @@ SESSION_DB_URL = f"sqlite+aiosqlite:///{SESSION_DB_PATH}"
 BUSINESS_DB_PATH = _runtime_path("BUSINESS_DB_PATH", "var/aurora_dados.db")
 
 # Chave e modelos Gemini (por agente; sem chave, cai no modelo fake).
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-MAIN_MODEL = os.getenv("MAIN_MODEL", "gemini-2.5-flash")
-RESERVATIONS_MODEL = os.getenv("RESERVATIONS_MODEL", "gemini-2.5-flash")
-VISITORS_MODEL = os.getenv("VISITORS_MODEL", "gemini-2.5-flash")
-REGULATIONS_MODEL = os.getenv("REGULATIONS_MODEL", "gemini-2.5-flash")
+# `or` de propósito: variável presente e vazia (é o que o `.env.example` traz)
+# vale como "não informada" e cai no default do código.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or ""
+MAIN_MODEL = os.getenv("MAIN_MODEL") or "gemini-2.5-flash"
+RESERVATIONS_MODEL = os.getenv("RESERVATIONS_MODEL") or "gemini-2.5-flash"
+VISITORS_MODEL = os.getenv("VISITORS_MODEL") or "gemini-2.5-flash"
+REGULATIONS_MODEL = os.getenv("REGULATIONS_MODEL") or "gemini-2.5-flash"
 
 
 def load_areas() -> dict[str, float]:
