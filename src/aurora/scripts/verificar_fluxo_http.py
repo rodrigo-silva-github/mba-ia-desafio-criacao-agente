@@ -298,6 +298,9 @@ def fase2(cli, st: dict) -> None:
     check(r.status_code == 200, f"nova mensagem responde 200 ({r.status_code})")
     evs2 = eventos(cli, s1)
     check(len(evs2) > len(evs), f"contagem de eventos aumentou ({len(evs2)} > {len(evs)})")
+    ts = [e["timestamp"] for e in evs2]
+    check(len(set(ts)) == len(ts),
+          f"nenhum timestamp repetido na sessão ({len(ts)} eventos; empate = ordem arbitrária)")
 
     r101 = cli.get("/apartamentos/101/reservas").json()
     check(any(x["area"] == "quadra" and x["data"] == "2030-04-06" for x in r101), "101 tem quadra 2030-04-06")

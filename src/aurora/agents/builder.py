@@ -36,7 +36,14 @@ from google.adk.sessions import DatabaseSessionService
 
 from .. import config
 from . import tools
+from . import clock
 from .fake_llm import FakeLlm
+
+# Relógio de eventos sem empate (ver `agents/clock.py`): o ADK ordena os
+# eventos por `(timestamp, id)` com id UUID, então timestamp repetido = ordem
+# arbitrária — o que faz o Gemini recusar o pedido com 400 quando o empate cai
+# entre a mensagem do morador e o primeiro function call do turno.
+clock.install()
 
 APP_NAME = "aurora"
 CONFIRMATION_FC = "adk_request_confirmation"
@@ -208,6 +215,9 @@ def build_app() -> App:
 
 def new_runner(app: App | None = None) -> Runner:
     """Runner com DatabaseSessionService sobre o banco de sessões."""
+    # Reinstala o relógio sem empate no contexto de quem vai rodar o turno
+    # (o provedor do ADK é um ContextVar): os eventos do turno nascem aqui.
+    clock.install()
     service = DatabaseSessionService(db_url=config.SESSION_DB_URL)
     return Runner(app=app or build_app(), session_service=service, auto_create_session=True)
 

@@ -131,17 +131,27 @@ acionados como tools, quem retoma é sempre o agente que emitiu a pendência, e 
 caminho fica determinístico. O spike que comparou as duas topologias está em
 `spikes/002-transfer-topology/`.
 
-**Determinismo do roteamento entre turnos.** Duas medidas em
-`src/aurora/agents/builder.py`:
+**Determinismo do roteamento entre turnos.** Três medidas:
 
-1. `disallow_transfer_to_parent=True` nos três especialistas. O router do ADK só
+1. `agents/clock.py` instala um relógio de eventos que **nunca repete um
+   valor**. O ADK carimba cada evento com `platform_time.get_time()` e o
+   `DatabaseSessionService` lê com `ORDER BY timestamp DESC, id DESC` — sendo
+   o `id` um UUID aleatório, dois eventos com o **mesmo** timestamp saem em
+   ordem arbitrária a cada leitura. Neste host o relógio repetia valores dentro
+   do mesmo instante (37% dos eventos ficavam empatados). Com o modelo real
+   isso vira um `400 INVALID_ARGUMENT` do Gemini — "function call turn comes
+   immediately after a user turn or after a function response turn" — quando o
+   empate cai entre a mensagem do morador e o primeiro function call do turno, e
+   a API devolvia `500` ao morador (aconteceu no passo 4 do fluxo do avaliador).
+   Sem empate, a ordem lida é sempre a ordem de criação, que é a válida. O
+   modelo fake não valida a estrutura do pedido, então esse defeito era
+   silencioso nas verificações offline — por isso o passo 13–14 do
+   `verificar_fluxo_http` checa que nenhum evento da sessão repete timestamp.
+2. `disallow_transfer_to_parent=True` nos três especialistas. O router do ADK só
    mantém um sub-agente no comando do turno seguinte se ele for "transferível"
    para a árvore inteira; com a flag, os eventos dos especialistas são ignorados
-   na varredura e o turno de texto volta sempre ao principal. Sem ela, a sessão
-   ficava presa no especialista do último domínio de forma intermitente, porque
-   a ordenação de eventos com o mesmo timestamp é arbitrária no
-   `DatabaseSessionService`.
-2. `anchor_root()`, chamada ao fim de cada turno resolvido, anexa um evento
+   na varredura e o turno de texto volta sempre ao principal.
+3. `anchor_root()`, chamada ao fim de cada turno resolvido, anexa um evento
    sintético do `main_agent` com timestamp estritamente maior que o maior já
    gravado. Um turno que terminou pedindo confirmação **não** é ancorado: o
    último evento precisa continuar sendo o pedido de confirmação do
@@ -390,15 +400,21 @@ grava e a outra recebe a recusa normal.
 ## Validação
 
 - O fluxo do avaliador (passos 1 a 14) foi executado contra o `uvicorn` real,
-  com `gemini-2.5-flash` do Google AI Studio: **56 verificações, 0 falhas** —
-  38 nos passos 1–12 e 18 nos passos 13–14, incluindo o reinício da API sem
+  com `gemini-2.5-flash` do Google AI Studio: **57 verificações, 0 falhas** —
+  38 nos passos 1–12 e 19 nos passos 13–14, incluindo o reinício da API sem
   restaurar os dados e as duas aprovações simultâneas disputando o mesmo slot.
   É reproduzível num comando só: `uv run python -m aurora.scripts.verificar_fluxo_http`
   sobe e reinicia o `uvicorn` sozinho, por HTTP, em bancos próprios.
+- Foi essa execução com o modelo real que expôs o defeito do relógio de eventos
+  (ver "Determinismo do roteamento entre turnos"): no passo 4 o Gemini recusava
+  o pedido com `400` e a API devolvia `500`, de forma intermitente, porque a
+  ordem dos eventos empatados depende do UUID. Depois do fix, a mesma execução
+  terminou com 152 eventos e **zero** empates de timestamp; o passo 13–14
+  passou a checar isso.
 - Sem `GEMINI_API_KEY`, o projeto usa um modelo fake determinista e as quatro
   verificações rodam offline, sem rede: `verificar_storage` 18 ok,
   `verificar_agentes` 23 checks, `verificar_api` 31 checks e
-  `verificar_fluxo_http` 56 checks (38 + 18). Com a chave preenchida, os agentes
+  `verificar_fluxo_http` 57 checks (38 + 19). Com a chave preenchida, os agentes
   usam o Gemini de verdade — aí o `verificar_fluxo_http` é a execução que vale,
   e o `verificar_api` passa a depender do texto que o modelo devolve (não é
   determinístico): rode-o com a chave vazia para o resultado offline
