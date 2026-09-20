@@ -68,10 +68,11 @@ valores default.
 | `uv run python -m aurora.scripts.verificar_agentes` | Verifica os agentes: principal + especialistas, tools e vínculo do apartamento com a sessão. |
 | `uv run python -m aurora.scripts.verificar_api` | Verifica a API de ponta a ponta, reproduzindo o fluxo de avaliação via transporte ASGI (sem subir servidor). |
 
-Observação: `verificar_storage` exercita o banco de negócio de verdade
-(`BUSINESS_DB_PATH`), então rode `restore` de novo depois dele se quiser as
-rotas de verificação no estado inicial. `verificar_api` usa bancos próprios
-(`var/verif_api_*.db`) e não interfere.
+Os três scripts de verificação usam bancos próprios em `var/`
+(`var/verif_storage_*.db`, `var/verif_dados.db`/`var/verif_sessoes.db` e
+`var/verif_api_*.db`) — não encostam no banco de negócio real
+(`var/aurora_dados.db`) nem nas sessões reais do ADK, e não interferem no
+estado do fluxo do avaliador.
 
 ### Rotas da API
 
@@ -390,8 +391,11 @@ grava e a outra recebe a recusa normal.
   restaurar os dados e as duas aprovações simultâneas disputando o mesmo slot.
 - Sem `GEMINI_API_KEY`, o projeto usa um modelo fake determinista e as três
   verificações rodam offline, sem rede: `verificar_storage` 18 ok,
-  `verificar_agentes` 23 checks e `verificar_api` 31 checks.
-- `verificar_storage` e `verificar_api` usam bancos próprios em `var/` — não
-  encostam no banco de negócio nem nas sessões reais.
+  `verificar_agentes` 23 checks e `verificar_api` 31 checks. Com a chave
+  preenchida, os agentes usam o Gemini de verdade e o `verificar_api` passa a
+  depender do texto que o modelo devolve (não é determinístico): rode-o com a
+  chave vazia para o resultado offline reproduzível.
+- As três verificações usam bancos próprios em `var/` — não encostam no banco
+  de negócio nem nas sessões reais.
 - `spikes/` documenta as decisões de topologia e o comportamento observado do
   ADK 2.9.2; não faz parte do fluxo da API.

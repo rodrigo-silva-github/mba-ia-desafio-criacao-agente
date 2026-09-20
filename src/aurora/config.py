@@ -1,7 +1,8 @@
 """Configuração do projeto: variáveis de ambiente e rotas de seed.
 
-Carrega-se o `.env` se existir (nunca versionado; `.env.example` traz só os
-nomes das variáveis sem valores). Os arquivos de `dados/` são só leitura:
+Carrega-se o `.env` se existir (nunca versionado; o `.env.example` versionado
+traz os nomes das variáveis, com a chave vazia e os defaults não secretos de
+modelo e caminhos). Os arquivos de `dados/` são só leitura:
 o estado vivo vive nos bancos SQLite de `var/` (fora do Git).
 """
 
